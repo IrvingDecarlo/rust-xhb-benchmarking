@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  benchmark-rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bench
+          POSTGRES_PASSWORD: benchpassword
+          POSTGRES_DB: benchmark
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bench -d benchmark"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://bench:benchpassword@127.0.0.1:5432/benchmark
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client (and hyperfine if available)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y hyperfine || true
+
+      - name: Apply schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/postgres/schema.sql
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo build
+        run: cargo build --release
+        working-directory: rust
+
+      - name: Phases (correctness, Rust + Postgres)
+        run: |
+          chmod +x harness/run.sh xharbour/scripts/clean-workdir.sh xharbour/build.sh
+          ./harness/run.sh phases --rows 8000 --postgres-url "$DATABASE_URL"
+
+      - name: Measurement manifest (small)
+        run: |
+          ./harness/run.sh measure --rows 3000 --postgres-url "$DATABASE_URL" --runs 2 --warmup 1
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench/results/**

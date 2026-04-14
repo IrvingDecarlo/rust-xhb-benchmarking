@@ -1,0 +1,3 @@
+[workspace]
+members = ["xhb-bench"]
+resolver = "2"

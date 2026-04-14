@@ -1,0 +1,10 @@
+/target
+**/target/
+bench/work/
+*.dbf
+*.cdx
+*.jsonl
+*.bincode
+.env
+*.log
+bench/results/

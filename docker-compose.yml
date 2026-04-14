@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: bench
+      POSTGRES_PASSWORD: benchpassword
+      POSTGRES_DB: benchmark
+    volumes:
+      - ./db/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench -d benchmark"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - synchronous_commit=off
+      - -c
+      - max_wal_size=1GB
