@@ -15,5 +15,10 @@ shopt -s nullglob
 for prg in "${SRC}"/*.prg; do
   base="$(basename "${prg}" .prg)"
   echo "hbmk2 ${prg} -> ${OUT}/${base}"
-  hbmk2 "${prg}" -o"${OUT}/${base}" || exit 1
+  # Link shared helpers into each binary.
+  hbmk2 \
+    "${prg}" \
+    "${SRC}/json_helpers.prg" \
+    "${SRC}/line_reader.prg" \
+    -o"${OUT}/${base}" || exit 1
 done

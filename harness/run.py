@@ -22,6 +22,8 @@ RUST = ROOT / "rust"
 BENCH_WORK = ROOT / "bench" / "work"
 RESULTS = ROOT / "bench" / "results"
 DEFAULT_DATABASE_URL = "postgresql://bench:benchpassword@127.0.0.1:5433/benchmark"
+XHB = ROOT / "xharbour"
+XHB_BIN = XHB / "bin"
 
 
 def redact_database_url(url: str) -> str:
@@ -47,6 +49,11 @@ def ensure_workdir() -> None:
 def cargo_build_release() -> Path:
     run_check(["cargo", "build", "--release"], cwd=RUST)
     return RUST / "target" / "release"
+
+
+def xhb_build() -> Path:
+    run_check([str(XHB / "build.sh")], cwd=ROOT)
+    return XHB_BIN
 
 
 def docker_up() -> None:
@@ -84,6 +91,25 @@ def parse_stdout_json_line(stdout: str) -> dict[str, Any] | None:
             except json.JSONDecodeError:
                 continue
     return None
+
+
+def verify_phase_output(entry: dict[str, Any]) -> None:
+    sj = entry.get("stdout_json") or {}
+    stack = entry.get("stack", "")
+    binary = entry.get("binary", "")
+    if not isinstance(sj, dict) or "phase" not in sj:
+        raise SystemExit(f"Missing JSON phase output for {stack}:{binary}")
+
+    # Basic sanity checks
+    if "rows" in sj and (not isinstance(sj["rows"], int) or sj["rows"] < 0):
+        raise SystemExit(f"Invalid rows for {stack}:{binary}: {sj.get('rows')}")
+
+    if stack == "xharbour":
+        if "millis" not in sj:
+            raise SystemExit(f"Missing millis for {stack}:{binary}")
+    if stack == "rust":
+        if "nanos" not in sj:
+            raise SystemExit(f"Missing nanos for {stack}:{binary}")
 
 
 def parse_time_v(stderr: str) -> dict[str, Any]:
@@ -181,6 +207,7 @@ def run_phases(args: argparse.Namespace) -> list[dict[str, Any]]:
     env["BENCH_OUTPUT_FINAL"] = str(BENCH_WORK / "out.jsonl")
 
     bins = cargo_build_release()
+    xhb_bins = xhb_build()
 
     if args.with_postgres and not getattr(args, "postgres_url", None):
         docker_up()
@@ -203,6 +230,32 @@ def run_phases(args: argparse.Namespace) -> list[dict[str, Any]]:
         b("bench-b0")
         b("bench-b1")
         b("bench-b2")
+        # xHarbour phases B3–B6 (DBF + cache JSONL)
+        xb = [
+            (
+                str(xhb_bins / "b3"),
+                [rows, str(BENCH_WORK / "data.jsonl"), str(BENCH_WORK / "xhb_bench")],
+            ),
+            (
+                str(xhb_bins / "b4"),
+                [str(BENCH_WORK / "xhb_bench"), str(BENCH_WORK / "xhb_cache.jsonl")],
+            ),
+            (str(xhb_bins / "b5"), [str(BENCH_WORK / "xhb_cache.jsonl")]),
+            (
+                str(xhb_bins / "b6"),
+                [str(BENCH_WORK / "xhb_cache.jsonl"), str(BENCH_WORK / "out-xhb.jsonl")],
+            ),
+        ]
+        for exe, argv in xb:
+            p = run([exe, *argv], env=env, cwd=ROOT, capture_output=True, text=True)
+            if p.returncode != 0:
+                print(p.stderr, file=sys.stderr)
+                p.check_returncode()
+            j = parse_stdout_json_line(p.stdout)
+            if j:
+                phases_out.append({"binary": Path(exe).name, **j})
+            else:
+                phases_out.append({"binary": Path(exe).name, "raw_stdout": p.stdout.strip()[:500]})
         if args.with_postgres or getattr(args, "postgres_url", None):
             b("bench-b3")
             b("bench-b4")
@@ -239,6 +292,7 @@ def cmd_measure(args: argparse.Namespace) -> None:
     env["BENCH_OUTPUT_FINAL"] = str(BENCH_WORK / "out.jsonl")
 
     bins = cargo_build_release()
+    xhb_bins = xhb_build()
 
     if args.with_postgres and not getattr(args, "postgres_url", None):
         docker_up()
@@ -253,6 +307,10 @@ def cmd_measure(args: argparse.Namespace) -> None:
             capture_output=True,
             text=True,
         )
+    # Seed xHarbour cache inputs (DBF + cache JSONL) before measuring in isolation.
+    run_check([str(XHB / "scripts" / "clean-workdir.sh")], cwd=ROOT)
+    run_check([str(xhb_bins / "b3"), rows, str(BENCH_WORK / "data.jsonl"), str(BENCH_WORK / "xhb_bench")], cwd=ROOT)
+    run_check([str(xhb_bins / "b4"), str(BENCH_WORK / "xhb_bench"), str(BENCH_WORK / "xhb_cache.jsonl")], cwd=ROOT)
 
     binaries = ["bench-b0", "bench-b1", "bench-b2"]
     if args.with_postgres or getattr(args, "postgres_url", None):
@@ -261,29 +319,83 @@ def cmd_measure(args: argparse.Namespace) -> None:
     manifest: dict[str, Any] = {
         "run_id": run_id,
         "rows": int(rows),
-        "stack": "rust",
+        "stack": "both",
         "database_url_redacted": redact_database_url(env.get("DATABASE_URL", "")),
         "phases": [],
     }
 
     try:
-        for name in binaries:
-            cmd = [str(bins / name)]
-            entry: dict[str, Any] = {"binary": name}
-            hf_path = out_dir / f"{name}.hyperfine.json"
+        def add_entry(stack: str, name: str, cmd: list[str]) -> None:
+            entry: dict[str, Any] = {"stack": stack, "binary": name}
+            hf_path = out_dir / f"{stack}-{name}.hyperfine.json"
             hf = run_hyperfine_json(
-                name, cmd, env, ROOT, warmup=args.warmup, runs=args.runs, export_path=hf_path
+                f"{stack}-{name}",
+                cmd,
+                env,
+                ROOT,
+                warmup=args.warmup,
+                runs=args.runs,
+                export_path=hf_path,
             )
             if hf:
                 entry.update(hf)
-            tv = run_time_v(name, cmd, env, ROOT)
+            tv = run_time_v(f"{stack}-{name}", cmd, env, ROOT)
             entry["time_v"] = tv
             if tv.get("stdout_json"):
                 entry["stdout_json"] = tv["stdout_json"]
+            verify_phase_output(entry)
             manifest["phases"].append(entry)
-            (out_dir / f"{name}.time-v.txt").write_text(
+            (out_dir / f"{stack}-{name}.time-v.txt").write_text(
                 json.dumps(tv, indent=2), encoding="utf-8"
             )
+
+        for name in binaries:
+            add_entry("rust", name, [str(bins / name)])
+
+        add_entry(
+            "xharbour",
+            "b3",
+            [
+                str(xhb_bins / "b3"),
+                rows,
+                str(BENCH_WORK / "data.jsonl"),
+                str(BENCH_WORK / "xhb_bench"),
+            ],
+        )
+        add_entry(
+            "xharbour",
+            "b4",
+            [
+                str(xhb_bins / "b4"),
+                str(BENCH_WORK / "xhb_bench"),
+                str(BENCH_WORK / "xhb_cache.jsonl"),
+            ],
+        )
+        add_entry(
+            "xharbour",
+            "b5",
+            [str(xhb_bins / "b5"), str(BENCH_WORK / "xhb_cache.jsonl")],
+        )
+        add_entry(
+            "xharbour",
+            "b6",
+            [
+                str(xhb_bins / "b6"),
+                str(BENCH_WORK / "xhb_cache.jsonl"),
+                str(BENCH_WORK / "out-xhb.jsonl"),
+            ],
+        )
+
+        # Parity checks (best-effort): validate xHarbour rows match expected count for DB phases.
+        expected_rows = int(rows)
+        for p in manifest["phases"]:
+            if p.get("stack") == "xharbour":
+                sj = p.get("stdout_json") or {}
+                ph = sj.get("phase", "")
+                if ph in ("B3_xhb", "B4_xhb", "B5_xhb", "B6_xhb"):
+                    got = sj.get("rows")
+                    if got is None or int(got) != expected_rows:
+                        raise SystemExit(f"xHarbour {ph} rows={got} expected={expected_rows}")
     finally:
         if (
             args.with_postgres
@@ -294,6 +406,7 @@ def cmd_measure(args: argparse.Namespace) -> None:
 
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (out_dir / "summary.md").write_text(render_summary_md(manifest), encoding="utf-8")
+    (out_dir / "summary.csv").write_text(render_summary_csv(manifest), encoding="utf-8")
     print("Wrote", out_dir / "manifest.json", flush=True)
 
 
@@ -304,11 +417,12 @@ def render_summary_md(manifest: dict[str, Any]) -> str:
         f"- Rows: **{manifest.get('rows')}**",
         f"- Stack: **{manifest.get('stack')}**",
         "",
-        "| Phase | Mean ms (hyperfine) | Max RSS KB |",
-        "|-------|---------------------|------------|",
+        "| Stack | Phase | Mean ms (hyperfine) | Max RSS KB |",
+        "|-------|-------|---------------------|------------|",
     ]
     for p in manifest.get("phases", []):
         name = p.get("name") or p.get("binary", "")
+        stack = p.get("stack", "")
         mean_ms = ""
         hf = p.get("hyperfine")
         if hf and hf.get("results"):
@@ -320,11 +434,38 @@ def render_summary_md(manifest: dict[str, Any]) -> str:
         tv = p.get("time_v") or {}
         if "max_rss_kb" in tv:
             rss = str(tv["max_rss_kb"])
-        lines.append(f"| {name} | {mean_ms} | {rss} |")
+        lines.append(f"| {stack} | {name} | {mean_ms} | {rss} |")
     lines.append("")
     lines.append("_Hyperfine omitted if not installed; then only `/usr/bin/time -v` fields apply._")
     lines.append("")
     return "\n".join(lines)
+
+
+def render_summary_csv(manifest: dict[str, Any]) -> str:
+    # stack,phase,rows,time_ms,max_rss_kb,wall_mean_ms
+    out = ["stack,phase,rows,time_ms,max_rss_kb,wall_mean_ms"]
+    rows = manifest.get("rows", "")
+    for p in manifest.get("phases", []):
+        stack = p.get("stack", "")
+        sj = p.get("stdout_json") or {}
+        phase = sj.get("phase") or p.get("binary", "")
+        time_ms = ""
+        if "millis" in sj:
+            time_ms = str(sj["millis"])
+        elif "nanos" in sj:
+            time_ms = f"{int(sj['nanos'])/1_000_000:.3f}"
+        tv = p.get("time_v") or {}
+        rss = tv.get("max_rss_kb", "")
+        wall_mean = ""
+        hf = p.get("hyperfine")
+        if hf and hf.get("results"):
+            r0 = hf["results"][0]
+            t = r0.get("mean")
+            if t is not None:
+                wall_mean = f"{t*1000:.3f}"
+        out.append(f"{stack},{phase},{rows},{time_ms},{rss},{wall_mean}")
+    out.append("")
+    return "\n".join(out)
 
 
 def main() -> None:
