@@ -4,18 +4,27 @@ Reproducible **B0–B6** workloads: loop, JSONL I/O, deserialize to maps, Postgr
 (Rust + `tokio-postgres`), read/reserialize/write. xHarbour uses native **DBF+CDX**
 (see `xharbour/`).
 
+The harness (`harness/run.sh` → `harness/run.py`) runs **both** stacks by default for
+`phases` and `measure`: it completes **all Rust** phase binaries for that invocation
+first, then **all xHarbour** B3–B6 binaries (same JSONL input; Postgres only on the
+Rust side). There is no “Rust-only” shortcut in the stock harness.
+
 ## Requirements
 
 - **Rust**: stable (see `rust-toolchain.toml`)
 - **Python**: 3.10+ (harness)
-- **Docker**: optional, for PostgreSQL (`docker compose`)
+- **xHarbour**: toolchain with **`hbmk2` on `PATH`** so `xharbour/build.sh` can emit
+  `xharbour/bin/b3` … `b6` (required for `phases` / `measure`; see `xharbour/README.md`)
+- **Docker**: optional, for PostgreSQL (`docker compose`) when running Rust B3–B6 locally
 
 ## Quick start
 
-From the repository root:
+From the repository root (install xHarbour / `hbmk2` first, or `phases` will exit with
+a message pointing at missing `xharbour/bin/*`):
 
 ```bash
 chmod +x harness/run.sh xharbour/scripts/clean-workdir.sh xharbour/build.sh
+# Optional: compile Rust only (`phases` / `measure` also run `cargo` + `xharbour/build.sh`).
 ./harness/run.sh build
 ./harness/run.sh phases --rows 10000
 ./harness/run.sh phases --rows 10000 --with-postgres --compose-down

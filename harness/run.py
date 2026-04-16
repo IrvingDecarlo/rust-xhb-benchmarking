@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Benchmark harness: phases (Rust B0–B6), optional Postgres (docker or URL),
-measurement (hyperfine + /usr/bin/time -v), manifest + markdown summary.
+Benchmark harness: run both stacks (Rust + PostgreSQL for B3–B6, xHarbour + DBF/CDX),
+optional Postgres (docker or URL), measurement (hyperfine + /usr/bin/time -v),
+manifest + markdown summary.
+
+Execution order: all Rust phase binaries for the selected run complete first, then
+all xHarbour phase binaries (B3–B6 in-tree), so the two stacks are not interleaved.
 """
 from __future__ import annotations
 
@@ -54,6 +58,18 @@ def cargo_build_release() -> Path:
 def xhb_build() -> Path:
     run_check([str(XHB / "build.sh")], cwd=ROOT)
     return XHB_BIN
+
+
+def require_xhb_phase_bins(bin_dir: Path) -> None:
+    """xHarbour B3–B6 binaries are required whenever the harness runs the xHarbour stack."""
+    missing = [name for name in ("b3", "b4", "b5", "b6") if not (bin_dir / name).is_file()]
+    if missing:
+        raise SystemExit(
+            "xHarbour phase binaries missing: "
+            + ", ".join(str(bin_dir / m) for m in missing)
+            + ". Install xHarbour so `hbmk2` is on PATH, then run `xharbour/build.sh` "
+            "(see README Requirements and xharbour/README.md)."
+        )
 
 
 def docker_up() -> None:
@@ -208,6 +224,7 @@ def run_phases(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     bins = cargo_build_release()
     xhb_bins = xhb_build()
+    require_xhb_phase_bins(xhb_bins)
 
     if args.with_postgres and not getattr(args, "postgres_url", None):
         docker_up()
@@ -230,7 +247,12 @@ def run_phases(args: argparse.Namespace) -> list[dict[str, Any]]:
         b("bench-b0")
         b("bench-b1")
         b("bench-b2")
-        # xHarbour phases B3–B6 (DBF + cache JSONL)
+        if args.with_postgres or getattr(args, "postgres_url", None):
+            b("bench-b3")
+            b("bench-b4")
+            b("bench-b5")
+            b("bench-b6")
+        # xHarbour B3–B6 (DBF + cache JSONL): run only after all Rust phases above finish.
         xb = [
             (
                 str(xhb_bins / "b3"),
@@ -256,11 +278,6 @@ def run_phases(args: argparse.Namespace) -> list[dict[str, Any]]:
                 phases_out.append({"binary": Path(exe).name, **j})
             else:
                 phases_out.append({"binary": Path(exe).name, "raw_stdout": p.stdout.strip()[:500]})
-        if args.with_postgres or getattr(args, "postgres_url", None):
-            b("bench-b3")
-            b("bench-b4")
-            b("bench-b5")
-            b("bench-b6")
     finally:
         if (
             args.with_postgres
@@ -293,12 +310,15 @@ def cmd_measure(args: argparse.Namespace) -> None:
 
     bins = cargo_build_release()
     xhb_bins = xhb_build()
+    require_xhb_phase_bins(xhb_bins)
 
     if args.with_postgres and not getattr(args, "postgres_url", None):
         docker_up()
         wait_pg()
 
-    # Seed JSONL before B3+ and before timing each binary in isolation.
+    # Remove stale DBF/CDX/JSONL/cache first so Rust seed recreates inputs cleanly.
+    run_check([str(XHB / "scripts" / "clean-workdir.sh")], cwd=ROOT)
+    # Seed Rust stack end-to-end first (JSONL + optional Postgres phases), then xHarbour prep.
     for seed in ("bench-b0", "bench-b1", "bench-b2"):
         run_check(
             [str(bins / seed)],
@@ -307,10 +327,26 @@ def cmd_measure(args: argparse.Namespace) -> None:
             capture_output=True,
             text=True,
         )
-    # Seed xHarbour cache inputs (DBF + cache JSONL) before measuring in isolation.
-    run_check([str(XHB / "scripts" / "clean-workdir.sh")], cwd=ROOT)
-    run_check([str(xhb_bins / "b3"), rows, str(BENCH_WORK / "data.jsonl"), str(BENCH_WORK / "xhb_bench")], cwd=ROOT)
-    run_check([str(xhb_bins / "b4"), str(BENCH_WORK / "xhb_bench"), str(BENCH_WORK / "xhb_cache.jsonl")], cwd=ROOT)
+    if args.with_postgres or getattr(args, "postgres_url", None):
+        for seed in ("bench-b3", "bench-b4", "bench-b5", "bench-b6"):
+            run_check(
+                [str(bins / seed)],
+                env=env,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+    # xHarbour: materialize DBF + intermediate cache JSONL before timed runs.
+    run_check(
+        [str(xhb_bins / "b3"), rows, str(BENCH_WORK / "data.jsonl"), str(BENCH_WORK / "xhb_bench")],
+        env=env,
+        cwd=ROOT,
+    )
+    run_check(
+        [str(xhb_bins / "b4"), str(BENCH_WORK / "xhb_bench"), str(BENCH_WORK / "xhb_cache.jsonl")],
+        env=env,
+        cwd=ROOT,
+    )
 
     binaries = ["bench-b0", "bench-b1", "bench-b2"]
     if args.with_postgres or getattr(args, "postgres_url", None):
@@ -476,7 +512,7 @@ def main() -> None:
         sp.add_argument(
             "--with-postgres",
             action="store_true",
-            help="Run B3–B6; start local docker compose Postgres unless --postgres-url is set",
+            help="Run Rust B3–B6 against Postgres; start local docker compose unless --postgres-url is set",
         )
         sp.add_argument(
             "--postgres-url",
@@ -489,11 +525,17 @@ def main() -> None:
             help="With --with-postgres only: docker compose down after run",
         )
 
-    sp = sub.add_parser("phases", help="Run B0–B6 (Rust); Postgres optional")
+    sp = sub.add_parser(
+        "phases",
+        help="Run B0–B6 for Rust, then xHarbour B3–B6 (DBF/CDX); Postgres optional for Rust B3–B6",
+    )
     sp.add_argument("--rows", type=int, default=10_000)
     add_pg_flags(sp)
 
-    sm = sub.add_parser("measure", help="Hyperfine + /usr/bin/time -v per binary; write manifest")
+    sm = sub.add_parser(
+        "measure",
+        help="Hyperfine + /usr/bin/time -v: all Rust phase binaries first, then xHarbour B3–B6; write manifest",
+    )
     sm.add_argument("--rows", type=int, default=10_000)
     sm.add_argument("--warmup", type=int, default=1)
     sm.add_argument("--runs", type=int, default=3)

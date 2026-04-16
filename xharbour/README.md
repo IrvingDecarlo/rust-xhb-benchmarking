@@ -21,4 +21,4 @@ See [DBF-SCHEMA.md](DBF-SCHEMA.md) for field layout matching `docs/workload-spec
 | `line_reader.prg` | Shared — buffered JSONL line reader |
 | `canon_helpers.prg` | Shared — canonical JSON formatting + rolling hash |
 
-Build with [build.sh](build.sh) (`hbmk2` on `PATH`). The harness (`harness/run.py`) builds and runs xHarbour phases as part of `phases` and `measure` (see repo root [README.md](../README.md)).
+Build with [build.sh](build.sh) (`hbmk2` on `PATH`). The harness (`harness/run.py`) invokes this script and runs **xHarbour `b3`–`b6` only after** the Rust phase binaries for that run have finished (`phases` / `measure`; see repo root [README.md](../README.md)).

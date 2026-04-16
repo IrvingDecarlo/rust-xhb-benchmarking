@@ -25,6 +25,15 @@ CI is expected to run on a **self-hosted GitHub Actions runner** with the **xHar
 
 The default pipeline checks **correctness** (phases complete, schema applied). To gate on performance, keep a checked-in or artifact-stored **baseline** `manifest.json` from `harness/run.py measure` and add a small comparator step (e.g. fail if any phase mean time exceeds baseline × `BENCH_REGRESSION_FACTOR`). This is intentionally not enforced in the stock workflow so runners stay stable across GitHub’s fleet.
 
+## Harness run order (`phases`, `measure`)
+
+For a single invocation, the harness finishes **all Rust** phase binaries that apply
+(B0–B2 always; B3–B6 when Postgres is enabled or `DATABASE_URL` is set), then runs
+**xHarbour** B3–B6. It does **not** interleave stacks mid-sequence (e.g. Rust B2
+followed immediately by xHarbour B3 before Rust B3–B6). Both stacks are part of the
+default `phases` / `measure` path; see the repository `README.md` for toolchain
+requirements (`hbmk2`, etc.).
+
 ## Measurement
 
 - **Wall time**: `[hyperfine](https://github.com/sharkdp/hyperfine)` for whole-process runs; export JSON.
