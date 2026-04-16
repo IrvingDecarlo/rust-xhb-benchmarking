@@ -20,5 +20,6 @@ for prg in "${SRC}"/*.prg; do
     "${prg}" \
     "${SRC}/json_helpers.prg" \
     "${SRC}/line_reader.prg" \
+    "${SRC}/canon_helpers.prg" \
     -o"${OUT}/${base}" || exit 1
 done

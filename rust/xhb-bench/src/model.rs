@@ -42,18 +42,16 @@ pub fn make_row(id: u64) -> BenchRow {
 
 /// Canonical JSON object with keys sorted: amount, code, flag, id
 pub fn canonical_json_line(row: &BenchRow) -> String {
-    let mut map = Map::new();
-    map.insert(
-        "amount".into(),
-        serde_json::Number::from_f64(row.amount)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-    );
-    map.insert("code".into(), Value::String(row.code.clone()));
-    map.insert("flag".into(), Value::Bool(row.flag));
-    map.insert("id".into(), Value::Number(row.id.into()));
-    let v = Value::Object(map);
-    v.to_string()
+    // Manual canonical formatting to keep cross-language parity:
+    // - id: integer
+    // - amount: fixed 6 decimals (matches DBF 18,6)
+    // - key order: amount, code, flag, id
+    let amount = format!("{:.6}", row.amount);
+    let flag = if row.flag { "true" } else { "false" };
+    format!(
+        "{{\"amount\":{amount},\"code\":\"{}\",\"flag\":{flag},\"id\":{}}}",
+        row.code, row.id
+    )
 }
 
 pub fn row_from_map(map: &Map<String, Value>) -> anyhow::Result<BenchRow> {

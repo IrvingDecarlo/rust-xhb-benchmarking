@@ -17,6 +17,10 @@ End-to-end comparisons across stacks are **logical workload parity**, not “sam
 - **Authoritative numbers**: your **local Linux** machine, pinned toolchain and Postgres image, documented CPU governor and background load.
 - **CI**: smaller `ROWS` (e.g. 10k–100k); correctness first; optional regression budgets against stored baselines.
 
+### CI runner requirement (xHarbour)
+
+CI is expected to run on a **self-hosted GitHub Actions runner** with the **xHarbour 1.2.3 (Build 20230605)** toolchain installed and `hbmk2` available on `PATH`, so CI can compile and benchmark **both** stacks.
+
 ### CI regression budgets (optional)
 
 The default pipeline checks **correctness** (phases complete, schema applied). To gate on performance, keep a checked-in or artifact-stored **baseline** `manifest.json` from `harness/run.py measure` and add a small comparator step (e.g. fail if any phase mean time exceeds baseline × `BENCH_REGRESSION_FACTOR`). This is intentionally not enforced in the stock workflow so runners stay stable across GitHub’s fleet.
@@ -45,4 +49,4 @@ Exact formats are in [workload-spec.md](workload-spec.md). Changing quoting or k
 
 ## xHarbour build
 
-The repository includes `.prg` sources and [xharbour/README.md](../xharbour/README.md). CI does not require a Harbour compiler; local runs can compile with your xHarbour 1.2.3 toolchain.
+The repository includes `.prg` sources and [xharbour/README.md](../xharbour/README.md). CI **does** require the xHarbour compiler toolchain (self-hosted runner), and local runs compile with your xHarbour 1.2.3 toolchain.

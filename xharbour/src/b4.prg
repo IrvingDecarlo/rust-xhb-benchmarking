@@ -17,6 +17,8 @@ REQUEST HB_GT_STD_DEFAULT
 REQUEST HB_RDDCDX
 
 EXTERNAL JsonEncode
+EXTERNAL CanonicalLineFromHash
+EXTERNAL HashLine32
 
 PROCEDURE Main( ... )
    LOCAL a := hb_AParams()
@@ -59,7 +61,7 @@ PROCEDURE Main( ... )
 
    CLOSE
 
-   /* Persist cache as canonical JSONL (also produces deterministic hash) */
+   /* Untimed: persist cache as JSONL of row-hashes (B5 will time reserialization) */
    fh := FCreate( cCache )
    IF fh < 0
       ConOut( '{"error":"cannot create cache","path":"' + cCache + '"}' + hb_eol() )
@@ -68,10 +70,11 @@ PROCEDURE Main( ... )
    ENDIF
 
    FOR i := 1 TO Len( rows )
-      line := CanonicalLine( rows[i] )
-      /* rolling 32-bit-ish hash (same as b2.prg char hash style) */
+      /* Cache: JSON encode the row hash (untimed) */
+      FWrite( fh, JsonEncode( rows[i] ) + hb_eol() )
+      /* Also compute a deterministic hash over canonical lines for validation */
+      line := CanonicalLineFromHash( rows[i] )
       h := HashLine32( h, line )
-      FWrite( fh, line + hb_eol() )
    NEXT
    FClose( fh )
 
@@ -80,22 +83,3 @@ PROCEDURE Main( ... )
       ',\"hash32\":' + hb_ntos( h ) + ;
       ',\"cache\":\"' + cCache + '\"}' + hb_eol() )
 RETURN
-
-STATIC FUNCTION CanonicalLine( hRow )
-   LOCAL id := hRow["id"]
-   LOCAL code := hRow["code"]
-   LOCAL amount := hRow["amount"]
-   LOCAL flag := hRow["flag"]
-RETURN '{\"amount\":' + AllTrim( Str( amount ) ) + ;
-   ',\"code\":\"' + code + '\",\"flag\":' + IIF( flag, "true", "false" ) + ;
-   ',\"id\":' + AllTrim( Str( id ) ) + '}'
-
-STATIC FUNCTION HashLine32( acc, cLine )
-   LOCAL j, ch
-   FOR j := 1 TO Len( cLine )
-      ch := Asc( SubStr( cLine, j, 1 ) )
-      acc := acc * 1315423911 + ch
-      acc := acc - Int( acc / 4294967296 ) * 4294967296
-   NEXT
-RETURN acc
-

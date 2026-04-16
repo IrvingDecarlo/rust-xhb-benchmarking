@@ -25,6 +25,11 @@ Example: `id=0` → `C0000000`; `id=123` → `C0000123`.
 - Key order does not matter for parsing; canonical output for hashing uses sorted keys: `amount`, `code`, `flag`, `id`.
 - Example: `{"amount":0.0,"code":"C0000000","flag":true,"id":0}`
 
+### Canonical numeric formatting (for hashing/parity)
+
+- `**id`**: integer, base-10, no leading spaces.
+- `**amount`**: fixed **6** decimals (matches DBF `N(18,6)`), e.g. `1.230000`.
+
 ### CSV (optional B1/B2 variant)
 
 - UTF-8, header: `id,code,amount,flag`

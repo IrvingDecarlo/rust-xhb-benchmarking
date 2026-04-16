@@ -1,5 +1,5 @@
 /*
- * B6: cache (canonical JSONL) → file write.
+ * B6: cache (row hashes as JSONL) → materialize hashes (untimed) → canonical file write (timed).
  *
  * CLI:
  *   b6 <cache_path> <output_path>
@@ -15,13 +15,15 @@ REQUEST HB_GT_STD_DEFAULT
 EXTERNAL LineReaderOpen
 EXTERNAL LineReaderNext
 EXTERNAL LineReaderClose
+EXTERNAL JsonParse
+EXTERNAL CanonicalLineFromHash
 
 PROCEDURE Main( ... )
    LOCAL a := hb_AParams()
    LOCAL cCache := IIF( Len( a ) > 0, a[1], "bench/work/xhb_cache.jsonl" )
    LOCAL cOut := IIF( Len( a ) > 1, a[2], "bench/work/out-xhb.jsonl" )
    LOCAL lr, fh, n := 0
-   LOCAL t0, t1, line
+   LOCAL t0, t1, line, aRows := {}, hRow, i
 
    hb_DirCreate( hb_FNamePath( cOut ) )
 
@@ -45,19 +47,28 @@ PROCEDURE Main( ... )
       RETURN
    ENDIF
 
-   t0 := hb_MilliSeconds()
+   /* Untimed: read cache JSONL and materialize hashes */
    DO WHILE LineReaderNext( @lr )
       line := lr["line"]
       IF Empty( line )
          LOOP
       ENDIF
-      FWrite( fh, line + hb_eol() )
-      n++
+      hRow := JsonParse( line )
+      AAdd( aRows, hRow )
    ENDDO
+
+   LineReaderClose( @lr )
+
+   /* Timed: canonical serialization + file write */
+   t0 := hb_MilliSeconds()
+   FOR i := 1 TO Len( aRows )
+      line := CanonicalLineFromHash( aRows[i] )
+      FWrite( fh, line + hb_eol() )
+   NEXT
    t1 := hb_MilliSeconds()
 
+   n := Len( aRows )
    FClose( fh )
-   LineReaderClose( @lr )
 
    ConOut( '{\"phase\":\"B6_xhb\",\"rows\":' + hb_ntos( n ) + ;
       ',\"millis\":' + hb_ntos( t1 - t0 ) + ;

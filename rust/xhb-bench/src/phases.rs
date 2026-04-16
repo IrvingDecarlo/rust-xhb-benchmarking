@@ -107,7 +107,7 @@ pub async fn run_b3(database_url: &str, path: &Path) -> anyhow::Result<std::time
     for row in &rows {
         let flag = if row.flag { "t" } else { "f" };
         let line = format!(
-            "{}\t{}\t{:.15}\t{}\n",
+            "{}\t{}\t{:.6}\t{}\n",
             row.id, row.code, row.amount, flag
         );
         sink.as_mut()

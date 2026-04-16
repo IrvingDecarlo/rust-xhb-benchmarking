@@ -7,8 +7,8 @@ on:
     branches: [main, master]
 
 jobs:
-  benchmark-rust:
-    runs-on: ubuntu-latest
+  benchmark-both:
+    runs-on: self-hosted
     services:
       postgres:
         image: postgres:16-alpine
@@ -30,25 +30,30 @@ jobs:
 
       - name: Install PostgreSQL client (and hyperfine if available)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          sudo apt-get install -y hyperfine || true
+          command -v psql >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+          command -v hyperfine >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y hyperfine || true)
 
       - name: Apply schema
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/postgres/schema.sql
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Cargo build
-        run: cargo build --release
-        working-directory: rust
+      - name: Build Rust (release)
+        run: |
+          cd rust
+          cargo build --release
 
-      - name: Phases (correctness, Rust + Postgres)
+      - name: Build xHarbour (hbmk2)
+        run: |
+          chmod +x xharbour/build.sh
+          ./xharbour/build.sh
+
+      - name: Correctness (Rust + xHarbour)
         run: |
           chmod +x harness/run.sh xharbour/scripts/clean-workdir.sh xharbour/build.sh
           ./harness/run.sh phases --rows 8000 --postgres-url "$DATABASE_URL"
 
-      - name: Measurement manifest (small)
+      - name: Measure (Rust + xHarbour, small)
         run: |
           ./harness/run.sh measure --rows 3000 --postgres-url "$DATABASE_URL" --runs 2 --warmup 1
 
