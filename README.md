@@ -31,6 +31,7 @@ Artifacts: `bench/work/` (created automatically); measurement output under `benc
 
 - [docs/methodology.md](docs/methodology.md)
 - [docs/workload-spec.md](docs/workload-spec.md)
+- [docs/CLEANUP.md](docs/CLEANUP.md) (side effects + how to undo)
 
 ## Layout
 
