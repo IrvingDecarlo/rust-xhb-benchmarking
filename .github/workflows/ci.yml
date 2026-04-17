@@ -7,7 +7,27 @@ on:
     branches: [main, master]
 
 jobs:
+  detect-xharbour:
+    runs-on: self-hosted
+    outputs:
+      xhb_available: ${{ steps.detect.outputs.xhb_available }}
+    steps:
+      - name: Detect xHarbour toolchain (hbmk2)
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v hbmk2 >/dev/null 2>&1; then
+            echo "xhb_available=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::xHarbour toolchain detected (hbmk2=$(command -v hbmk2)). CI will run Rust + xHarbour benchmarks."
+          else
+            echo "xhb_available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::xHarbour toolchain NOT detected (hbmk2 missing). Skipping benchmarks because Rust would have nothing to compare against. Install xHarbour on this self-hosted runner so hbmk2 is on PATH."
+          fi
+
   benchmark-both:
+    needs: [detect-xharbour]
+    if: needs.detect-xharbour.outputs.xhb_available == 'true'
     runs-on: self-hosted
     services:
       postgres:
@@ -62,3 +82,13 @@ jobs:
         with:
           name: bench-results
           path: bench/results/**
+
+  xharbour-missing:
+    needs: [detect-xharbour]
+    if: needs.detect-xharbour.outputs.xhb_available != 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Benchmarks skipped (xHarbour missing)
+        shell: bash
+        run: |
+          echo "::notice::Benchmarks skipped: xHarbour toolchain not installed on this self-hosted runner (hbmk2 missing)."
