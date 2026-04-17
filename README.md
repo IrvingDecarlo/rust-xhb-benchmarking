@@ -13,16 +13,16 @@ Rust side). There is no “Rust-only” shortcut in the stock harness.
 
 - **Rust**: stable (see `rust-toolchain.toml`)
 - **Python**: 3.10+ (harness)
-- **xHarbour**: toolchain with **`hbmk2` on `PATH`** so `xharbour/build.sh` can emit
-  `xharbour/bin/b3` … `b6` (required for `phases` / `measure`; see `xharbour/README.md`).
-  A best-effort helper script exists to unpack a *user-provided* xHarbour archive into
-  `xharbour/toolchain/` (it does **not** download or install Harbour).
+- **xHarbour**: toolchain with `**hbmk2` on `PATH`** so `xharbour/build.sh` can emit
+`xharbour/bin/b3` … `b6` (required for `phases` / `measure`; see `xharbour/README.md`).
+A best-effort helper script exists to unpack a *user-provided* xHarbour archive into
+`xharbour/toolchain/` (it does **not** download or install Harbour).
 - **Docker**: optional, for PostgreSQL (`docker compose`) when running Rust B3–B6 locally
 
 ## Quick start
 
 From the repository root (install xHarbour / `hbmk2` first, or `phases` will exit with
-a message pointing at missing `xharbour/bin/*`):
+a message pointing at missing `xharbour/bin/`*):
 
 ```bash
 chmod +x harness/run.sh xharbour/scripts/clean-workdir.sh xharbour/build.sh xharbour/scripts/install-toolchain.sh
