@@ -24,7 +24,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
           import json
           import os
           import sys
@@ -32,12 +32,24 @@ jobs:
           import urllib.parse
           import urllib.request
 
+          def write_output(name: str, value: str) -> None:
+              path = os.environ.get("GITHUB_OUTPUT", "")
+              if not path:
+                  print("::error::GITHUB_OUTPUT is not set; cannot publish step outputs.", file=sys.stderr)
+                  raise SystemExit(2)
+              with open(path, "a", encoding="utf-8") as f:
+                  f.write(f"{name}={value}\n")
+
           token = os.environ.get("GITHUB_TOKEN", "")
           repo = os.environ.get("GH_REPO", "")
           if not token or not repo:
-              print("self_hosted_available=false")
-              print("::error::Missing GITHUB_TOKEN or GH_REPO; cannot evaluate self-hosted runners.")
-              sys.exit(2)
+              write_output("self_hosted_available", "false")
+              print(
+                  "::error::Missing GITHUB_TOKEN or GH_REPO; cannot evaluate self-hosted runners. "
+                  "Skipping self-hosted jobs.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(0)
 
           owner, name = repo.split("/", 1)
           base = f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(name)}/actions/runners"
@@ -77,7 +89,7 @@ jobs:
                   page += 1
 
               available = online_self_hosted > 0
-              print(f"self_hosted_available={'true' if available else 'false'}")
+              write_output("self_hosted_available", "true" if available else "false")
               if available:
                   print(
                       f"::notice::Self-hosted runner pool looks usable (online runners with label self-hosted: {online_self_hosted})."
@@ -91,7 +103,7 @@ jobs:
           except Exception as e:  # noqa: BLE001 (best-effort guard)
               # Fork PRs / restricted tokens can make this API unavailable. Prefer skipping
               # self-hosted jobs over failing CI or leaving jobs queued forever.
-              print("self_hosted_available=false")
+              write_output("self_hosted_available", "false")
               print(
                   "::notice::Could not query self-hosted runners via GitHub API; skipping self-hosted jobs. "
                   f"Reason: {e}"
